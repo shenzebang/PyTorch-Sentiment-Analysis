@@ -10,31 +10,32 @@ import torch.nn as nn
 import time
 
 
-def train(model, iterator, optimizer, criterion):
+def train(model, iterator, optimizer, criterion, N_local_epoch=1):
     epoch_loss = 0
     epoch_acc = 0
 
     model.train()
 
-    for batch in iterator:
-        optimizer.zero_grad()
+    for _ in range(N_local_epoch):
+        for batch in iterator:
+            optimizer.zero_grad()
 
-        text, text_lengths = batch.text
+            text, text_lengths = batch.text
 
-        predictions = model(text, text_lengths).squeeze(1)
+            predictions = model(text, text_lengths).squeeze(1)
 
-        loss = criterion(predictions, batch.label)
+            loss = criterion(predictions, batch.label)
 
-        acc = binary_accuracy(predictions, batch.label)
+            acc = binary_accuracy(predictions, batch.label)
 
-        loss.backward()
+            loss.backward()
 
-        optimizer.step()
+            optimizer.step()
 
-        epoch_loss += loss.item()
-        epoch_acc += acc.item()
+            epoch_loss += loss.item()
+            epoch_acc += acc.item()
 
-    return epoch_loss / len(iterator), epoch_acc / len(iterator)
+    return model.state_dict(), epoch_loss / len(iterator) / N_local_epoch, epoch_acc / len(iterator) / N_local_epoch
 
 
 def evaluate(model, iterator, criterion):
@@ -67,7 +68,7 @@ def SA_single(args, device):
     LABEL = data.LabelField(dtype=torch.float)
 
     train_data, test_data = datasets.IMDB.splits(TEXT, LABEL)
-    train_data, valid_data = train_data.split(random_state=random.seed(args.SEED))
+    train_data, valid_data = train_data.split()
 
     TEXT.build_vocab(train_data,
                      max_size=args.MAX_VOCAB_SIZE,
@@ -127,7 +128,7 @@ def SA_single(args, device):
 
         start_time = time.time()
 
-        train_loss, train_acc = train(model, train_iterator, optimizer, criterion)
+        _, train_loss, train_acc = train(model, train_iterator, optimizer, criterion)
         valid_loss, valid_acc = evaluate(model, valid_iterator, criterion)
 
         end_time = time.time()
