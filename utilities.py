@@ -1,9 +1,17 @@
 import torch
+from torchtext.legacy import data
 from torchtext.legacy.data import Dataset
 from typing import Tuple
 from torchtext.data.utils import RandomShuffler
 import numpy as np
 import time
+
+
+TEXT = data.Field(tokenize='spacy',
+                      tokenizer_language='en_core_web_sm',
+                      include_lengths=True)
+
+LABEL = data.LabelField(dtype=torch.float)
 
 def epoch_time(start_time, end_time):
     elapsed_time = end_time - start_time

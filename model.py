@@ -19,6 +19,10 @@ class RNN(nn.Module):
 
         self.dropout = nn.Dropout(dropout)
 
+        # to be defined by the model personalization algorithm
+        self.head_keys = None
+        self.representation_keys = None
+
     def forward(self, text, text_lengths):
         # text = [sent len, batch size]
 

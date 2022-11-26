@@ -4,17 +4,18 @@ from options import args_parser
 from torchtext.legacy import datasets
 import random
 from model import RNN
-from utilities import count_parameters, binary_accuracy, epoch_time
+from utilities import count_parameters, binary_accuracy, epoch_time, TEXT, LABEL
 import torch.optim as optim
 import torch.nn as nn
 import time
 
 
-def train(model, iterator, optimizer, criterion, N_local_epoch=1):
+def train(model, iterator, optimizer, criterion, N_local_epoch=1, ft=False):
     epoch_loss = 0
     epoch_acc = 0
 
-    model.train()
+    if not ft:
+        model.train()
 
     for _ in range(N_local_epoch):
         for batch in iterator:
@@ -61,14 +62,10 @@ def evaluate(model, iterator, criterion):
 
 
 def SA_single(args, device):
-    TEXT = data.Field(tokenize='spacy',
-                      tokenizer_language='en_core_web_sm',
-                      include_lengths=True)
 
-    LABEL = data.LabelField(dtype=torch.float)
 
     train_data, test_data = datasets.IMDB.splits(TEXT, LABEL)
-    train_data, valid_data = train_data.split()
+
 
     TEXT.build_vocab(train_data,
                      max_size=args.MAX_VOCAB_SIZE,
@@ -76,6 +73,8 @@ def SA_single(args, device):
                      unk_init=torch.Tensor.normal_)
 
     LABEL.build_vocab(train_data)
+
+    train_data, valid_data = train_data.split()
 
     train_iterator, valid_iterator, test_iterator = data.BucketIterator.splits(
         (train_data, valid_data, test_data),
