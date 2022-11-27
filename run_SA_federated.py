@@ -4,7 +4,7 @@ from options import args_parser
 from torchtext.legacy import datasets
 import random
 from model import RNN
-from utilities import count_parameters, binary_accuracy, epoch_time, splits_federated
+from utilities import count_parameters, binary_accuracy, epoch_time
 import torch.optim as optim
 import torch.nn as nn
 import time
@@ -12,29 +12,15 @@ import copy
 
 from run_SA_single import evaluate, train
 from utilities_data import LOAD_DATASET_FEDEATED
-
-
-def fine_tune(model, iterator, optimizer, criterion, N_epoch):
-
-    if N_epoch == 0:
-        return
-
-    for name, param in model.named_parameters():
-        if name in model.head_keys:
-            param.requires_grad = True
-        else:
-            param.requires_grad = False
-
-    # fine tune the head
-    train(model, iterator, optimizer, criterion, N_epoch, True)
-
+from algorithms_federated import ALGORITHMS, TO_CANDIDATE, train_over_keys
 
 
 def train_on_federated_datasets(args, model, clients_iterators):
     # ===== training =====
-    print("#" * 10 + f" start training on {args.dataset} " + "#" * 10)
+    print("#" * 10 + f" start training on {args.dataset} using {args.algorithm} " + "#" * 10)
 
     N_clients = len(clients_iterators)
+    print("#" * 10 + f"There are {N_clients} clients. " + "#" * 10)
 
     criterion = nn.BCEWithLogitsLoss()
 
@@ -44,38 +30,28 @@ def train_on_federated_datasets(args, model, clients_iterators):
     best_valid_loss = float('inf')
 
     sd_global = model.state_dict()
+    sd_locals = [copy.deepcopy(sd_global) for _ in range(N_clients)]
+
+    algorithm = ALGORITHMS[args.algorithm]
+    to_candidate = TO_CANDIDATE[args.algorithm]
 
     for epoch in range(args.N_global_rounds):
-
         start_time = time.time()
-
+        ### train ###
         train_loss = 0
         train_acc = 0
-        valid_loss = 0
-        valid_acc = 0
+        for cid, (client_iterators, sd_local) in enumerate(zip(clients_iterators, sd_locals)):
+            train_iterator, _, _ = client_iterators
 
-        sd_locals = []
-        for client_iterators in clients_iterators:
-            train_iterator, valid_iterator, _ = client_iterators
-
-            sd_local = copy.deepcopy(sd_global)
-            model.load_state_dict(sd_local)
-            optimizer = optim.Adam(model.parameters())
-
-            sd_local, train_loss_local, train_acc_local = train(model, train_iterator, optimizer, criterion,
-                                                                args.N_local_epoch)
-            valid_loss_local, valid_acc_local = evaluate(model, valid_iterator, criterion)
-
+            sd_local, train_loss_local, train_acc_local = algorithm(model, sd_global, sd_local, train_iterator,
+                                                                    criterion,
+                                                                    args.N_local_epoch)
             train_loss += train_loss_local
             train_acc += train_acc_local
-            valid_loss += valid_loss_local
-            valid_acc += valid_acc_local
-            sd_locals.append(sd_local)
+            sd_locals[cid] = sd_local
 
         train_loss /= N_clients
         train_acc /= N_clients
-        valid_loss /= N_clients
-        valid_acc /= N_clients
 
         for key in sd_global.keys():
             sd_global[key] = torch.mean(torch.stack([sd_local[key] for sd_local in sd_locals], dim=0), dim=0)
@@ -83,6 +59,27 @@ def train_on_federated_datasets(args, model, clients_iterators):
         end_time = time.time()
 
         epoch_mins, epoch_secs = epoch_time(start_time, end_time)
+
+        ### validate ###
+        valid_loss = 0
+        valid_acc = 0
+        for client_iterators, sd_local in zip(clients_iterators, sd_locals):
+            train_iterator, valid_iterator, _ = client_iterators
+
+            sd_candidate = to_candidate(model, sd_global, sd_local)
+            model.load_state_dict(sd_candidate)
+
+            if args.N_ft_epoch > 0:
+                optimizer = optim.Adam(model.parameters())
+                train_over_keys(model, train_iterator, optimizer, criterion, args.N_ft_epoch, model.head_keys)
+
+            valid_loss_local, valid_acc_local = evaluate(model, valid_iterator, criterion)
+
+            valid_loss += valid_loss_local
+            valid_acc += valid_acc_local
+
+        valid_loss /= N_clients
+        valid_acc /= N_clients
 
         if valid_loss < best_valid_loss:
             best_valid_loss = valid_loss
@@ -92,16 +89,18 @@ def train_on_federated_datasets(args, model, clients_iterators):
         print(f'\tTrain Loss: {train_loss:.3f} | Train Acc: {train_acc * 100:.2f}%')
         print(f'\t Val. Loss: {valid_loss:.3f} |  Val. Acc: {valid_acc * 100:.2f}%')
 
-
-
+    ### test ###
+    sd_test = torch.load('tut2-model.pt')
     test_loss = 0
     test_acc = 0
     for client_iterators in clients_iterators:
         train_iterator, _, test_iterator = client_iterators
 
-        model.load_state_dict(torch.load('tut2-model.pt'))
-        optimizer = optim.Adam(model.parameters())
-        fine_tune(model, train_iterator, optimizer, criterion, args.N_ft_epoch)
+        model.load_state_dict(copy.deepcopy(sd_test))
+        if args.N_ft_epoch > 0:
+            optimizer = optim.Adam(model.parameters())
+            train_over_keys(model, train_iterator, optimizer, criterion, args.N_ft_epoch, model.head_keys)
+
         test_loss_local, test_acc_local = evaluate(model, test_iterator, criterion)
         test_loss += test_loss_local
         test_acc += test_acc_local
@@ -110,6 +109,7 @@ def train_on_federated_datasets(args, model, clients_iterators):
     test_acc /= N_clients
 
     print(f'Test Loss: {test_loss:.3f} | Test Acc: {test_acc * 100:.2f}%')
+
 
 def SA_federated(args, device):
     TEXT = data.Field(tokenize='spacy',
@@ -123,7 +123,8 @@ def SA_federated(args, device):
     train_datasets_federated, valid_datasets_federated, test_datasets_federated = load_dataset(args, TEXT, LABEL)
 
     clients_iterators = []
-    for train_data, valid_data, test_data in zip(train_datasets_federated, valid_datasets_federated, test_datasets_federated):
+    for train_data, valid_data, test_data in zip(train_datasets_federated, valid_datasets_federated,
+                                                 test_datasets_federated):
         train_iterator, valid_iterator, test_iterator = data.BucketIterator.splits(
             (train_data, valid_data, test_data),
             batch_size=args.BATCH_SIZE,
@@ -145,6 +146,8 @@ def SA_federated(args, device):
                 args.DROPOUT,
                 PAD_IDX)
 
+    print(f'The model has {count_parameters(model):,} trainable parameters')
+
     head_keys = ['fc.weight', 'fc.bias']
     representation_keys = []
     for key in model.state_dict().keys():
@@ -153,9 +156,7 @@ def SA_federated(args, device):
 
     model.head_keys = head_keys
     model.representation_keys = representation_keys
-
-
-    print(f'The model has {count_parameters(model):,} trainable parameters')
+    print(f"The head keys for fine-tuning are {model.head_keys}")
 
     pretrained_embeddings = TEXT.vocab.vectors
 
@@ -169,7 +170,6 @@ def SA_federated(args, device):
     model.embedding.weight.data[PAD_IDX] = torch.zeros(args.EMBEDDING_DIM)
 
     train_on_federated_datasets(args, model, clients_iterators)
-
 
 
 if __name__ == '__main__':

@@ -10,12 +10,11 @@ import torch.nn as nn
 import time
 
 
-def train(model, iterator, optimizer, criterion, N_local_epoch=1, ft=False):
+def train(model, iterator, optimizer, criterion, N_local_epoch=1):
     epoch_loss = 0
     epoch_acc = 0
 
-    if not ft:
-        model.train()
+    model.train()
 
     for _ in range(N_local_epoch):
         for batch in iterator:

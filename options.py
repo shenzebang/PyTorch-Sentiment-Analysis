@@ -21,6 +21,7 @@ def args_parser():
     parser.add_argument('--leaf_dir', type=str, default="/Github/leaf",
                         help="directory to the leaf repository (relative to ~)")
     parser.add_argument('--dataset', type=str, choices=["imdb", "sent140"])
+    parser.add_argument('--algorithm', type=str, choices=["fedavg", "fedrep"])
 
     args = parser.parse_args()
     return args
