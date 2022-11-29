@@ -13,7 +13,9 @@ import copy
 from run_SA_single import evaluate, train
 from utilities_data import LOAD_DATASET_FEDEATED
 from algorithms_federated import ALGORITHMS, TO_CANDIDATE, train_over_keys
+from scheduler import Scheduler
 
+import numpy as np
 
 def train_on_federated_datasets(args, model, clients_iterators):
     # ===== training =====
@@ -34,13 +36,21 @@ def train_on_federated_datasets(args, model, clients_iterators):
 
     algorithm = ALGORITHMS[args.algorithm]
     to_candidate = TO_CANDIDATE[args.algorithm]
-
+    scheduler_fl = Scheduler("exponential-fixed", "flanp", N_clients=N_clients, participating_rate=1, N_init_clients=40,
+                             double_every=1)
     for epoch in range(args.N_global_rounds):
         start_time = time.time()
         ### train ###
         train_loss = 0
         train_acc = 0
-        for cid, (client_iterators, sd_local) in enumerate(zip(clients_iterators, sd_locals)):
+
+        index_activated = scheduler_fl.step()
+        index_activated = np.sort(index_activated)
+
+        clients_iterators_activated = [clients_iterators[index] for index in index_activated]
+        sd_locals_activated = [sd_locals[index] for index in index_activated]
+
+        for cid, client_iterators, sd_local in zip(index_activated, clients_iterators_activated, sd_locals_activated):
             train_iterator, _, _ = client_iterators
 
             sd_local, train_loss_local, train_acc_local = algorithm(model, sd_global, sd_local, train_iterator,
@@ -50,11 +60,11 @@ def train_on_federated_datasets(args, model, clients_iterators):
             train_acc += train_acc_local
             sd_locals[cid] = sd_local
 
-        train_loss /= N_clients
-        train_acc /= N_clients
+        train_loss /= len(index_activated)
+        train_acc /= len(index_activated)
 
         for key in sd_global.keys():
-            sd_global[key] = torch.mean(torch.stack([sd_local[key] for sd_local in sd_locals], dim=0), dim=0)
+            sd_global[key] = torch.mean(torch.stack([sd_locals[cid][key] for cid in index_activated], dim=0), dim=0)
 
         end_time = time.time()
 
@@ -81,11 +91,13 @@ def train_on_federated_datasets(args, model, clients_iterators):
         valid_loss /= N_clients
         valid_acc /= N_clients
 
-        if valid_loss < best_valid_loss:
-            best_valid_loss = valid_loss
-            torch.save(sd_global, 'tut2-model.pt')
+        # if valid_loss < best_valid_loss or True:
+        #     best_valid_loss = valid_loss
+        #     torch.save(sd_global, 'tut2-model.pt')
 
-        print(f'Epoch: {epoch + 1:02} | Epoch Time: {epoch_mins}m {epoch_secs}s')
+        torch.save(sd_global, 'tut2-model.pt')
+
+        print(f'Epoch: {epoch + 1:02} | Epoch Time: {epoch_mins}m {epoch_secs}s | Simulated time {scheduler_fl.total_simulated_time: .2f}')
         print(f'\tTrain Loss: {train_loss:.3f} | Train Acc: {train_acc * 100:.2f}%')
         print(f'\t Val. Loss: {valid_loss:.3f} |  Val. Acc: {valid_acc * 100:.2f}%')
 
@@ -112,6 +124,7 @@ def train_on_federated_datasets(args, model, clients_iterators):
 
 
 def SA_federated(args, device):
+    # prepare the iterators of the clients
     TEXT = data.Field(tokenize='spacy',
                       tokenizer_language='en_core_web_sm',
                       include_lengths=True)
@@ -132,6 +145,8 @@ def SA_federated(args, device):
             device=device)
         clients_iterators.append((train_iterator, valid_iterator, test_iterator))
 
+
+    # define the NN model
     INPUT_DIM = len(TEXT.vocab)
     OUTPUT_DIM = 1
     BIDIRECTIONAL = True
@@ -152,6 +167,7 @@ def SA_federated(args, device):
     representation_keys = []
     for key in model.state_dict().keys():
         if key not in head_keys:
+        # if key not in head_keys and key != 'embedding.weight':
             representation_keys.append(key)
 
     model.head_keys = head_keys
@@ -169,6 +185,8 @@ def SA_federated(args, device):
     model.embedding.weight.data[UNK_IDX] = torch.zeros(args.EMBEDDING_DIM)
     model.embedding.weight.data[PAD_IDX] = torch.zeros(args.EMBEDDING_DIM)
 
+
+    # start training
     train_on_federated_datasets(args, model, clients_iterators)
 
 
