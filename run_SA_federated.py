@@ -24,6 +24,9 @@ def train_on_federated_datasets(args, model, clients_iterators):
     N_clients = len(clients_iterators)
     print("#" * 10 + f"There are {N_clients} clients. " + "#" * 10)
 
+    n_sample_clients = np.asarray([len(client_iterators[0].dataset) for client_iterators in clients_iterators])
+    # weight_clients = weight_clients / np.sum(weight_clients)
+
     criterion = nn.BCEWithLogitsLoss()
 
     model = model.to(device)
@@ -36,8 +39,8 @@ def train_on_federated_datasets(args, model, clients_iterators):
 
     algorithm = ALGORITHMS[args.algorithm]
     to_candidate = TO_CANDIDATE[args.algorithm]
-    scheduler_fl = Scheduler("exponential-fixed", "flanp", N_clients=N_clients, participating_rate=1, N_init_clients=40,
-                             double_every=1)
+    scheduler_fl = Scheduler("exponential-fixed", args.scheduler, N_clients=N_clients, participating_rate=1,
+                             N_init_clients=args.N_init_clients, double_every=args.double_every)
     for epoch in range(args.N_global_rounds):
         start_time = time.time()
         ### train ###
@@ -45,26 +48,25 @@ def train_on_federated_datasets(args, model, clients_iterators):
         train_acc = 0
 
         index_activated = scheduler_fl.step()
-        index_activated = np.sort(index_activated)
+        # index_activated = np.sort(index_activated)
 
         clients_iterators_activated = [clients_iterators[index] for index in index_activated]
         sd_locals_activated = [sd_locals[index] for index in index_activated]
+
+        weight_clients = n_sample_clients / np.sum(n_sample_clients[index_activated])
 
         for cid, client_iterators, sd_local in zip(index_activated, clients_iterators_activated, sd_locals_activated):
             train_iterator, _, _ = client_iterators
 
             sd_local, train_loss_local, train_acc_local = algorithm(model, sd_global, sd_local, train_iterator,
                                                                     criterion,
-                                                                    args.N_local_epoch)
-            train_loss += train_loss_local
-            train_acc += train_acc_local
+                                                                    args.N_local_epoch, lr=args.lr)
+            train_loss += train_loss_local * weight_clients[cid]
+            train_acc += train_acc_local * weight_clients[cid]
             sd_locals[cid] = sd_local
 
-        train_loss /= len(index_activated)
-        train_acc /= len(index_activated)
-
         for key in sd_global.keys():
-            sd_global[key] = torch.mean(torch.stack([sd_locals[cid][key] for cid in index_activated], dim=0), dim=0)
+            sd_global[key] = torch.sum(torch.stack([sd_locals[cid][key] * weight_clients[cid] for cid in index_activated], dim=0), dim=0)
 
         end_time = time.time()
 
@@ -73,8 +75,10 @@ def train_on_federated_datasets(args, model, clients_iterators):
         ### validate ###
         valid_loss = 0
         valid_acc = 0
-        for client_iterators, sd_local in zip(clients_iterators, sd_locals):
-            train_iterator, valid_iterator, _ = client_iterators
+        weight_clients = n_sample_clients / np.sum(n_sample_clients)
+        for cid, (client_iterators, sd_local) in enumerate(zip(clients_iterators, sd_locals)):
+            # train_iterator, valid_iterator, _ = client_iterators
+            train_iterator, _, valid_iterator = client_iterators
 
             sd_candidate = to_candidate(model, sd_global, sd_local)
             model.load_state_dict(sd_candidate)
@@ -85,11 +89,8 @@ def train_on_federated_datasets(args, model, clients_iterators):
 
             valid_loss_local, valid_acc_local = evaluate(model, valid_iterator, criterion)
 
-            valid_loss += valid_loss_local
-            valid_acc += valid_acc_local
-
-        valid_loss /= N_clients
-        valid_acc /= N_clients
+            valid_loss += valid_loss_local * weight_clients[cid]
+            valid_acc += valid_acc_local * weight_clients[cid]
 
         # if valid_loss < best_valid_loss or True:
         #     best_valid_loss = valid_loss
@@ -105,20 +106,22 @@ def train_on_federated_datasets(args, model, clients_iterators):
     sd_test = torch.load('tut2-model.pt')
     test_loss = 0
     test_acc = 0
-    for client_iterators in clients_iterators:
+    weight_clients = n_sample_clients / np.sum(n_sample_clients)
+    for cid, (client_iterators, sd_local) in enumerate(zip(clients_iterators, sd_locals)):
         train_iterator, _, test_iterator = client_iterators
 
-        model.load_state_dict(copy.deepcopy(sd_test))
+        # model.load_state_dict(copy.deepcopy(sd_test))
+
+        sd_candidate = to_candidate(model, sd_test, sd_local)
+        model.load_state_dict(sd_candidate)
+
         if args.N_ft_epoch > 0:
             optimizer = optim.Adam(model.parameters())
             train_over_keys(model, train_iterator, optimizer, criterion, args.N_ft_epoch, model.head_keys)
 
         test_loss_local, test_acc_local = evaluate(model, test_iterator, criterion)
-        test_loss += test_loss_local
-        test_acc += test_acc_local
-
-    test_loss /= N_clients
-    test_acc /= N_clients
+        test_loss += test_loss_local * weight_clients[cid]
+        test_acc += test_acc_local * weight_clients[cid]
 
     print(f'Test Loss: {test_loss:.3f} | Test Acc: {test_acc * 100:.2f}%')
 
@@ -194,6 +197,7 @@ if __name__ == '__main__':
     args = args_parser()
 
     random.seed(args.SEED)
+    np.random.seed(args.SEED)
     torch.manual_seed(args.SEED)
     torch.backends.cudnn.deterministic = True
 
