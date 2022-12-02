@@ -39,7 +39,7 @@ def train_on_federated_datasets(args, model, clients_iterators):
 
     algorithm = ALGORITHMS[args.algorithm]
     to_candidate = TO_CANDIDATE[args.algorithm]
-    scheduler_fl = Scheduler("exponential-fixed", args.scheduler, N_clients=N_clients, participating_rate=1,
+    scheduler_fl = Scheduler("exponential-fixed", args.scheduler, N_clients=N_clients, participating_rate=args.participating_rate,
                              N_init_clients=args.N_init_clients, double_every=args.double_every)
     for epoch in range(args.N_global_rounds):
         start_time = time.time()
@@ -48,7 +48,8 @@ def train_on_federated_datasets(args, model, clients_iterators):
         train_acc = 0
 
         index_activated = scheduler_fl.step()
-        # index_activated = np.sort(index_activated)
+        index_activated = np.sort(index_activated)
+        # print(f"In epoch {epoch}, the activated clients are {index_activated}")
 
         clients_iterators_activated = [clients_iterators[index] for index in index_activated]
         sd_locals_activated = [sd_locals[index] for index in index_activated]
@@ -66,7 +67,8 @@ def train_on_federated_datasets(args, model, clients_iterators):
             sd_locals[cid] = sd_local
 
         for key in sd_global.keys():
-            sd_global[key] = torch.sum(torch.stack([sd_locals[cid][key] * weight_clients[cid] for cid in index_activated], dim=0), dim=0)
+            sd_global[key] = sd_global[key] * (1 - args.lr_g) \
+                             + args.lr_g * torch.sum(torch.stack([sd_locals[cid][key] * weight_clients[cid] for cid in index_activated], dim=0), dim=0)
 
         end_time = time.time()
 
@@ -75,22 +77,23 @@ def train_on_federated_datasets(args, model, clients_iterators):
         ### validate ###
         valid_loss = 0
         valid_acc = 0
-        weight_clients = n_sample_clients / np.sum(n_sample_clients)
-        for cid, (client_iterators, sd_local) in enumerate(zip(clients_iterators, sd_locals)):
-            # train_iterator, valid_iterator, _ = client_iterators
-            train_iterator, _, valid_iterator = client_iterators
+        if args.validate:
+            weight_clients = n_sample_clients / np.sum(n_sample_clients)
+            for cid, (client_iterators, sd_local) in enumerate(zip(clients_iterators, sd_locals)):
+                # train_iterator, valid_iterator, _ = client_iterators
+                train_iterator, _, valid_iterator = client_iterators
 
-            sd_candidate = to_candidate(model, sd_global, sd_local)
-            model.load_state_dict(sd_candidate)
+                sd_candidate = to_candidate(model, sd_global, sd_local)
+                model.load_state_dict(sd_candidate)
 
-            if args.N_ft_epoch > 0:
-                optimizer = optim.Adam(model.parameters())
-                train_over_keys(model, train_iterator, optimizer, criterion, args.N_ft_epoch, model.head_keys)
+                if args.N_ft_epoch > 0:
+                    optimizer = optim.Adam(model.parameters())
+                    train_over_keys(model, train_iterator, optimizer, criterion, args.N_ft_epoch, model.head_keys)
 
-            valid_loss_local, valid_acc_local = evaluate(model, valid_iterator, criterion)
+                valid_loss_local, valid_acc_local = evaluate(model, valid_iterator, criterion)
 
-            valid_loss += valid_loss_local * weight_clients[cid]
-            valid_acc += valid_acc_local * weight_clients[cid]
+                valid_loss += valid_loss_local * weight_clients[cid]
+                valid_acc += valid_acc_local * weight_clients[cid]
 
         # if valid_loss < best_valid_loss or True:
         #     best_valid_loss = valid_loss

@@ -5,6 +5,8 @@ import json
 from itertools import chain
 import os
 
+import re
+
 def load_IMDB_federated(args, TEXT, LABEL):
     train_data, test_data = legacy.datasets.IMDB.splits(TEXT, LABEL)
 
@@ -31,6 +33,16 @@ def load_IMDB_federated(args, TEXT, LABEL):
 
 digit_to_pos_neg = {0: 'neg', 1: 'pos'}
 
+
+def remove_links_mentions(tweet):
+    https_link_re_pattern = "https?:\/\/t.co/[\w]+"
+    http_link_re_pattern = "http?:\/\/t.co/[\w]+"
+    mention_re_pattern = "@\w+"
+    tweet = re.sub(http_link_re_pattern, "", tweet)
+    tweet = re.sub(https_link_re_pattern, "", tweet)
+    tweet = re.sub(mention_re_pattern, "", tweet)
+    return tweet.lower()
+
 class SENT140_SINGLE_USER(legacy.data.Dataset):
     @staticmethod
     def sort_key(ex):
@@ -48,7 +60,7 @@ class SENT140_SINGLE_USER(legacy.data.Dataset):
         user_labels = user_data_and_label['y']
         user_examples = []
         for user_data, user_label in zip(user_datas, user_labels):
-            user_examples.append(legacy.data.Example.fromlist([user_data[4], digit_to_pos_neg[user_label]], fields))
+            user_examples.append(legacy.data.Example.fromlist([remove_links_mentions(user_data[4]), digit_to_pos_neg[user_label]], fields))
 
         return user_examples
 

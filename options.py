@@ -16,14 +16,18 @@ def args_parser():
     parser.add_argument('--N_local_epoch', type=int, default=5)
     parser.add_argument('--N_ft_epoch', type=int, default=2)
     parser.add_argument('--N_global_rounds', type=int, default=5)
+    parser.add_argument('--participating_rate', type=float, default=.2)
     parser.add_argument('--BATCH_SIZE', type=int, default=10)
     parser.add_argument('--DROPOUT', type=float, default=.5)
     parser.add_argument('--lr', type=float, default=1e-3)
+    parser.add_argument('--lr_g', type=float, default=.5)
     parser.add_argument('--MAX_VOCAB_SIZE', type=int, default=25000)
     parser.add_argument('--leaf_dir', type=str, default="/Github/leaf",
                         help="directory to the leaf repository (relative to ~)")
     parser.add_argument('--dataset', type=str, choices=["imdb", "sent140"])
     parser.add_argument('--algorithm', type=str, choices=["fedavg", "fedrep"])
+
+    parser.add_argument('--validate', action="store_true")
 
     parser.add_argument('--scheduler', type=str, choices=["all", "flanp"])
     parser.add_argument('--N_init_clients', type=int, default=40)

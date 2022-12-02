@@ -33,7 +33,7 @@ def fedrep(model: nn.Module, sd_global, sd_local, train_iterator, criterion, N_l
     optimizer = optim.Adam(model.parameters(), lr=lr)
     train_over_keys(model, train_iterator, optimizer, criterion, N_head_epoch, model.head_keys)
 
-    optimizer = optim.Adam(model.parameters())
+    optimizer = optim.SGD(model.parameters(), lr=lr)
     return train_over_keys(model, train_iterator, optimizer, criterion, N_local_epoch, model.representation_keys)
 
 

@@ -22,7 +22,7 @@ class Scheduler:
 
         self.double_every = double_every # double m_flanp after every other "double_every" rounds
         self.double_counter = double_every
-        self.m_flanp = min(N_init_clients, N_clients)
+        self.m_flanp = min(N_init_clients, self.N_activate)
 
         self.total_simulated_time = 0
 
