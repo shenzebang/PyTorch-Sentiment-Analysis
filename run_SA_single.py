@@ -8,6 +8,7 @@ from utilities import count_parameters, binary_accuracy, epoch_time, TEXT, LABEL
 import torch.optim as optim
 import torch.nn as nn
 import time
+from utilities_data import LOAD_DATASET_CENTRALIZED
 
 
 def train(model, iterator, optimizer, criterion, N_local_epoch=1):
@@ -62,18 +63,9 @@ def evaluate(model, iterator, criterion):
 
 def SA_single(args, device):
 
+    load_dataset = LOAD_DATASET_CENTRALIZED[args.dataset]
 
-    train_data, test_data = datasets.IMDB.splits(TEXT, LABEL)
-
-
-    TEXT.build_vocab(train_data,
-                     max_size=args.MAX_VOCAB_SIZE,
-                     vectors="glove.6B.100d",
-                     unk_init=torch.Tensor.normal_)
-
-    LABEL.build_vocab(train_data)
-
-    train_data, valid_data = train_data.split()
+    train_data, valid_data, test_data = load_dataset(args, TEXT, LABEL)
 
     train_iterator, valid_iterator, test_iterator = data.BucketIterator.splits(
         (train_data, valid_data, test_data),
@@ -112,22 +104,22 @@ def SA_single(args, device):
 
     # ===== training =====
     print("#" * 10)
-    optimizer = optim.Adam(model.parameters())
+    optimizer = optim.SGD(model.parameters(), lr=args.lr)
     criterion = nn.BCEWithLogitsLoss()
 
     model = model.to(device)
     criterion = criterion.to(device)
 
-    N_EPOCHS = 5
 
     best_valid_loss = float('inf')
 
-    for epoch in range(N_EPOCHS):
+    for epoch in range(args.N_global_rounds):
 
         start_time = time.time()
 
         _, train_loss, train_acc = train(model, train_iterator, optimizer, criterion)
-        valid_loss, valid_acc = evaluate(model, valid_iterator, criterion)
+        # valid_loss, valid_acc = evaluate(model, valid_iterator, criterion)
+        valid_loss, valid_acc = evaluate(model, test_iterator, criterion)
 
         end_time = time.time()
 

@@ -3,7 +3,7 @@ from torchtext.legacy import data
 from options import args_parser
 from torchtext.legacy import datasets
 import random
-from model import RNN
+from model import get_model, get_keys, get_TEXT
 from utilities import count_parameters, binary_accuracy, epoch_time
 import torch.optim as optim
 import torch.nn as nn
@@ -24,7 +24,8 @@ def train_on_federated_datasets(args, model, clients_iterators):
     N_clients = len(clients_iterators)
     print("#" * 10 + f"There are {N_clients} clients. " + "#" * 10)
 
-    n_sample_clients = np.asarray([len(client_iterators[0].dataset) for client_iterators in clients_iterators])
+    n_sample_clients_train = np.asarray([len(client_iterators[0].dataset) for client_iterators in clients_iterators])
+    n_sample_clients_test = np.asarray([len(client_iterators[2].dataset) for client_iterators in clients_iterators])
     # weight_clients = weight_clients / np.sum(weight_clients)
 
     criterion = nn.BCEWithLogitsLoss()
@@ -54,13 +55,12 @@ def train_on_federated_datasets(args, model, clients_iterators):
         clients_iterators_activated = [clients_iterators[index] for index in index_activated]
         sd_locals_activated = [sd_locals[index] for index in index_activated]
 
-        weight_clients = n_sample_clients / np.sum(n_sample_clients[index_activated])
+        weight_clients = n_sample_clients_train / np.sum(n_sample_clients_train[index_activated])
 
         for cid, client_iterators, sd_local in zip(index_activated, clients_iterators_activated, sd_locals_activated):
             train_iterator, _, _ = client_iterators
 
-            sd_local, train_loss_local, train_acc_local = algorithm(model, sd_global, sd_local, train_iterator,
-                                                                    criterion,
+            sd_local, train_loss_local, train_acc_local = algorithm(model, sd_global, sd_local, train_iterator, criterion,
                                                                     args.N_local_epoch, lr=args.lr)
             train_loss += train_loss_local * weight_clients[cid]
             train_acc += train_acc_local * weight_clients[cid]
@@ -70,6 +70,8 @@ def train_on_federated_datasets(args, model, clients_iterators):
             sd_global[key] = sd_global[key] * (1 - args.lr_g) \
                              + args.lr_g * torch.sum(torch.stack([sd_locals[cid][key] * weight_clients[cid] for cid in index_activated], dim=0), dim=0)
 
+        torch.save(sd_global, 'tut2-model.pt')
+
         end_time = time.time()
 
         epoch_mins, epoch_secs = epoch_time(start_time, end_time)
@@ -78,7 +80,7 @@ def train_on_federated_datasets(args, model, clients_iterators):
         valid_loss = 0
         valid_acc = 0
         if args.validate:
-            weight_clients = n_sample_clients / np.sum(n_sample_clients)
+            weight_clients = n_sample_clients_test / np.sum(n_sample_clients_test)
             for cid, (client_iterators, sd_local) in enumerate(zip(clients_iterators, sd_locals)):
                 # train_iterator, valid_iterator, _ = client_iterators
                 train_iterator, _, valid_iterator = client_iterators
@@ -87,7 +89,7 @@ def train_on_federated_datasets(args, model, clients_iterators):
                 model.load_state_dict(sd_candidate)
 
                 if args.N_ft_epoch > 0:
-                    optimizer = optim.Adam(model.parameters())
+                    optimizer = optim.Adam(model.parameters(), lr=1e-2)
                     train_over_keys(model, train_iterator, optimizer, criterion, args.N_ft_epoch, model.head_keys)
 
                 valid_loss_local, valid_acc_local = evaluate(model, valid_iterator, criterion)
@@ -99,7 +101,7 @@ def train_on_federated_datasets(args, model, clients_iterators):
         #     best_valid_loss = valid_loss
         #     torch.save(sd_global, 'tut2-model.pt')
 
-        torch.save(sd_global, 'tut2-model.pt')
+        sd_global = torch.load('tut2-model.pt')
 
         print(f'Epoch: {epoch + 1:02} | Epoch Time: {epoch_mins}m {epoch_secs}s | Simulated time {scheduler_fl.total_simulated_time: .2f}')
         print(f'\tTrain Loss: {train_loss:.3f} | Train Acc: {train_acc * 100:.2f}%')
@@ -109,7 +111,7 @@ def train_on_federated_datasets(args, model, clients_iterators):
     sd_test = torch.load('tut2-model.pt')
     test_loss = 0
     test_acc = 0
-    weight_clients = n_sample_clients / np.sum(n_sample_clients)
+    weight_clients = n_sample_clients_test / np.sum(n_sample_clients_test)
     for cid, (client_iterators, sd_local) in enumerate(zip(clients_iterators, sd_locals)):
         train_iterator, _, test_iterator = client_iterators
 
@@ -119,7 +121,7 @@ def train_on_federated_datasets(args, model, clients_iterators):
         model.load_state_dict(sd_candidate)
 
         if args.N_ft_epoch > 0:
-            optimizer = optim.Adam(model.parameters())
+            optimizer = optim.Adam(model.parameters(), lr=1e-2)
             train_over_keys(model, train_iterator, optimizer, criterion, args.N_ft_epoch, model.head_keys)
 
         test_loss_local, test_acc_local = evaluate(model, test_iterator, criterion)
@@ -131,14 +133,10 @@ def train_on_federated_datasets(args, model, clients_iterators):
 
 def SA_federated(args, device):
     # prepare the iterators of the clients
-    TEXT = data.Field(tokenize='spacy',
-                      tokenizer_language='en_core_web_sm',
-                      include_lengths=True)
-
+    TEXT = get_TEXT(args)
     LABEL = data.LabelField(dtype=torch.float)
 
     load_dataset = LOAD_DATASET_FEDEATED[args.dataset]
-
     train_datasets_federated, valid_datasets_federated, test_datasets_federated = load_dataset(args, TEXT, LABEL)
 
     clients_iterators = []
@@ -151,46 +149,21 @@ def SA_federated(args, device):
             device=device)
         clients_iterators.append((train_iterator, valid_iterator, test_iterator))
 
+    model = get_model(args, TEXT)
 
-    # define the NN model
-    INPUT_DIM = len(TEXT.vocab)
-    OUTPUT_DIM = 1
-    BIDIRECTIONAL = True
-    PAD_IDX = TEXT.vocab.stoi[TEXT.pad_token]
-
-    model = RNN(INPUT_DIM,
-                args.EMBEDDING_DIM,
-                args.HIDDEN_DIM,
-                OUTPUT_DIM,
-                args.N_LAYERS,
-                BIDIRECTIONAL,
-                args.DROPOUT,
-                PAD_IDX)
-
-    print(f'The model has {count_parameters(model):,} trainable parameters')
-
-    head_keys = ['fc.weight', 'fc.bias']
-    representation_keys = []
-    for key in model.state_dict().keys():
-        if key not in head_keys:
-        # if key not in head_keys and key != 'embedding.weight':
-            representation_keys.append(key)
-
+    head_keys, representation_keys = get_keys(model)
     model.head_keys = head_keys
     model.representation_keys = representation_keys
     print(f"The head keys for fine-tuning are {model.head_keys}")
 
     pretrained_embeddings = TEXT.vocab.vectors
-
     print(pretrained_embeddings.shape)
-
     model.embedding.weight.data.copy_(pretrained_embeddings)
 
     UNK_IDX = TEXT.vocab.stoi[TEXT.unk_token]
-
+    PAD_IDX = TEXT.vocab.stoi[TEXT.pad_token]
     model.embedding.weight.data[UNK_IDX] = torch.zeros(args.EMBEDDING_DIM)
     model.embedding.weight.data[PAD_IDX] = torch.zeros(args.EMBEDDING_DIM)
-
 
     # start training
     train_on_federated_datasets(args, model, clients_iterators)

@@ -16,15 +16,14 @@ def train_over_keys(model, iterator, optimizer, criterion, N_epoch, keys):
     return train(model, iterator, optimizer, criterion, N_epoch)
 
 
-def fedavg(model: nn.Module, sd_global, sd_local, train_iterator, criterion, N_local_epoch, lr=1e-3):
+def fedavg(model: nn.Module, sd_global, sd_local, train_iterator, criterion, N_local_epoch, lr=1e-2):
     sd_local = copy.deepcopy(sd_global)
     model.load_state_dict(sd_local)
-    optimizer = optim.Adam(model.parameters(), lr=lr)
+    optimizer = optim.SGD(model.parameters(), lr=lr)
     all_keys = model.representation_keys + model.head_keys
     return train_over_keys(model, train_iterator, optimizer, criterion, N_local_epoch, all_keys)
 
-
-def fedrep(model: nn.Module, sd_global, sd_local, train_iterator, criterion, N_local_epoch, N_head_epoch=5, lr=1e-3):
+def fedrep(model: nn.Module, sd_global, sd_local, train_iterator, criterion, N_local_epoch, N_head_epoch=5, lr=1e-2):
     _sd_local = copy.deepcopy(sd_global)
     for key in model.head_keys:
         _sd_local[key] = sd_local[key]

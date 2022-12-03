@@ -7,6 +7,10 @@ import argparse
 def args_parser():
     parser = argparse.ArgumentParser()
 
+    parser.add_argument('--dataset', type=str, choices=["imdb", "sent140"])
+    parser.add_argument('--algorithm', type=str, choices=["fedavg", "fedrep"])
+    parser.add_argument('--model', type=str, choices=["rnn", "cnn"])
+
     parser.add_argument('--SEED', type=int, default=400)
     parser.add_argument('--EMBEDDING_DIM', type=int, default=100)
     parser.add_argument('--HIDDEN_DIM', type=int, default=256)
@@ -20,12 +24,10 @@ def args_parser():
     parser.add_argument('--BATCH_SIZE', type=int, default=10)
     parser.add_argument('--DROPOUT', type=float, default=.5)
     parser.add_argument('--lr', type=float, default=1e-3)
-    parser.add_argument('--lr_g', type=float, default=.5)
+    parser.add_argument('--lr_g', type=float, default=1.)
     parser.add_argument('--MAX_VOCAB_SIZE', type=int, default=25000)
     parser.add_argument('--leaf_dir', type=str, default="/Github/leaf",
                         help="directory to the leaf repository (relative to ~)")
-    parser.add_argument('--dataset', type=str, choices=["imdb", "sent140"])
-    parser.add_argument('--algorithm', type=str, choices=["fedavg", "fedrep"])
 
     parser.add_argument('--validate', action="store_true")
 
