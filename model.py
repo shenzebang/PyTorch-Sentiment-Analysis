@@ -17,9 +17,9 @@ class RNN(nn.Module):
                            bidirectional=bidirectional,
                            dropout=dropout)
 
-        self.fc = nn.Linear(hidden_dim * 2, 10)
+        self.fc = nn.Linear(hidden_dim * 2, 5)
 
-        self.decoder = nn.Linear(10, output_dim)
+        self.decoder = nn.Linear(5, output_dim)
 
         self.dropout = nn.Dropout(dropout)
 
@@ -52,11 +52,13 @@ class RNN(nn.Module):
         # concat the final forward (hidden[-2,:,:]) and backward (hidden[-1,:,:]) hidden layers
         # and apply dropout
 
-        hidden = self.dropout(torch.cat((hidden[-2, :, :], hidden[-1, :, :]), dim=1))
+        # hidden = self.dropout(torch.cat((hidden[-2, :, :], hidden[-1, :, :]), dim=1))
+        hidden = torch.cat((hidden[-2, :, :], hidden[-1, :, :]), dim=1)
 
         # hidden = [batch size, hid dim * num directions]
 
-        return self.decoder(self.fc(hidden))
+        output = self.dropout(F.relu(self.fc(hidden)))
+        return self.decoder(output)
 
 
 class CNN(nn.Module):

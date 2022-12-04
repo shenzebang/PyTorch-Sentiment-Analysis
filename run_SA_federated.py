@@ -60,17 +60,24 @@ def train_on_federated_datasets(args, model, clients_iterators):
         for cid, client_iterators, sd_local in zip(index_activated, clients_iterators_activated, sd_locals_activated):
             train_iterator, _, _ = client_iterators
 
-            sd_local, train_loss_local, train_acc_local = algorithm(model, sd_global, sd_local, train_iterator, criterion,
+            model_cid = copy.deepcopy(model)
+            sd_local, train_loss_local, train_acc_local = algorithm(model_cid, sd_global, sd_local, train_iterator, criterion,
                                                                     args.N_local_epoch, lr=args.lr)
+
+
+            # print(f"{torch.norm(model_cid.state_dict()['embedding.weight'] - model.state_dict()['embedding.weight']): .10f}")
             train_loss += train_loss_local * weight_clients[cid]
             train_acc += train_acc_local * weight_clients[cid]
-            sd_locals[cid] = sd_local
+            sd_locals[cid] = model_cid.state_dict()
 
+
+        sd_global_new = {}
         for key in sd_global.keys():
-            sd_global[key] = sd_global[key] * (1 - args.lr_g) \
+            sd_global_new[key] = sd_global[key] * (1 - args.lr_g) \
                              + args.lr_g * torch.sum(torch.stack([sd_locals[cid][key] * weight_clients[cid] for cid in index_activated], dim=0), dim=0)
 
-        torch.save(sd_global, 'tut2-model.pt')
+        model.load_state_dict(sd_global_new)
+        # torch.save(sd_global_new, 'tut2-model.pt')
 
         end_time = time.time()
 
@@ -85,14 +92,14 @@ def train_on_federated_datasets(args, model, clients_iterators):
                 # train_iterator, valid_iterator, _ = client_iterators
                 train_iterator, _, valid_iterator = client_iterators
 
-                sd_candidate = to_candidate(model, sd_global, sd_local)
-                model.load_state_dict(sd_candidate)
+                # sd_candidate = to_candidate(model, sd_global, sd_local)
+                model_cid = copy.deepcopy(model)
 
                 if args.N_ft_epoch > 0:
-                    optimizer = optim.Adam(model.parameters(), lr=1e-2)
-                    train_over_keys(model, train_iterator, optimizer, criterion, args.N_ft_epoch, model.head_keys)
+                    optimizer = optim.Adam(model_cid.parameters(), lr=1e-2)
+                    train_over_keys(model_cid, train_iterator, optimizer, criterion, args.N_ft_epoch, model.head_keys)
 
-                valid_loss_local, valid_acc_local = evaluate(model, valid_iterator, criterion)
+                valid_loss_local, valid_acc_local = evaluate(model_cid, valid_iterator, criterion)
 
                 valid_loss += valid_loss_local * weight_clients[cid]
                 valid_acc += valid_acc_local * weight_clients[cid]
@@ -101,14 +108,14 @@ def train_on_federated_datasets(args, model, clients_iterators):
         #     best_valid_loss = valid_loss
         #     torch.save(sd_global, 'tut2-model.pt')
 
-        sd_global = torch.load('tut2-model.pt')
+        # sd_global = torch.load('tut2-model.pt')
 
         print(f'Epoch: {epoch + 1:02} | Epoch Time: {epoch_mins}m {epoch_secs}s | Simulated time {scheduler_fl.total_simulated_time: .2f}')
         print(f'\tTrain Loss: {train_loss:.3f} | Train Acc: {train_acc * 100:.2f}%')
         print(f'\t Val. Loss: {valid_loss:.3f} |  Val. Acc: {valid_acc * 100:.2f}%')
 
     ### test ###
-    sd_test = torch.load('tut2-model.pt')
+    # sd_test = torch.load('tut2-model.pt')
     test_loss = 0
     test_acc = 0
     weight_clients = n_sample_clients_test / np.sum(n_sample_clients_test)
@@ -117,8 +124,8 @@ def train_on_federated_datasets(args, model, clients_iterators):
 
         # model.load_state_dict(copy.deepcopy(sd_test))
 
-        sd_candidate = to_candidate(model, sd_test, sd_local)
-        model.load_state_dict(sd_candidate)
+        # sd_candidate = to_candidate(model, sd_test, sd_local)
+        # model.load_state_dict(sd_candidate)
 
         if args.N_ft_epoch > 0:
             optimizer = optim.Adam(model.parameters(), lr=1e-2)
