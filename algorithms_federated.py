@@ -19,37 +19,21 @@ def train_over_keys(model, iterator, optimizer, criterion, N_epoch, keys):
     return new_sd, loss, acc
 
 
-def fedavg(model: nn.Module, sd_global, sd_local, train_iterator, criterion, N_local_epoch, lr=1e-2):
-    # sd_local = copy.deepcopy(sd_global)
-    # model.load_state_dict(sd_local)
+def fedavg(model: nn.Module, train_iterator, criterion, N_local_epoch, lr=1e-2):
     optimizer = optim.SGD(model.parameters(), lr=lr)
-    all_keys = model.representation_keys + model.head_keys
+    all_keys = model.ft_keys + model.non_ft_keys
     new_sd, loss, acc = train_over_keys(model, train_iterator, optimizer, criterion, N_local_epoch, all_keys)
 
-    # print(torch.norm(new_sd['embedding.weight'] - sd_global['embedding.weight']))
-    # print(torch.norm(sd_local['embedding.weight'] - sd_global['embedding.weight']))
-    return sd_local, loss, acc
+    return new_sd, loss, acc
 
-def fedrep(model: nn.Module, sd_global, sd_local, train_iterator, criterion, N_local_epoch, N_head_epoch=5, lr=1e-2):
-    # _sd_local = copy.deepcopy(sd_global)
-    # for key in model.head_keys:
-    #     _sd_local[key] = sd_local[key]
-
-    model_copy = copy.deepcopy(model)
-
-    # model.load_state_dict(_sd_local)
+def fedrep(model: nn.Module, train_iterator, criterion, N_local_epoch, N_head_epoch=5, lr=1e-2):
     optimizer = optim.Adam(model.parameters(), lr=1e-2)
-    train_over_keys(model, train_iterator, optimizer, criterion, N_head_epoch, model.head_keys)
-
-
+    train_over_keys(model, train_iterator, optimizer, criterion, N_head_epoch, model.ft_keys)
 
     optimizer = optim.SGD(model.parameters(), lr=lr, momentum=.5)
+    sd_new, loss, acc = train_over_keys(model, train_iterator, optimizer, criterion, N_local_epoch, model.non_ft_keys)
 
-    sd_new, loss, acc = train_over_keys(model, train_iterator, optimizer, criterion, N_local_epoch, model.representation_keys)
-
-    # print(f"{torch.norm(model_copy.state_dict()['embedding.weight'] - model.state_dict()['embedding.weight']): .10f}")
     return sd_new, loss, acc
-
 
 
 def to_candidate_fedavg(model, sd_global, sd_local):
@@ -64,6 +48,7 @@ def to_candidate_fedrep(model, sd_global, sd_local):
 
 ALGORITHMS = {'fedavg': fedavg,
               'fedrep': fedrep,
+              'lg'    : fedrep,
               }
 
 TO_CANDIDATE = {'fedavg': to_candidate_fedavg,

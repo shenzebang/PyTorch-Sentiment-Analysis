@@ -138,15 +138,21 @@ def get_model(args, TEXT):
 
     return model
 
-def get_keys(model):
-    head_keys = ['decoder.weight', 'decoder.bias']
-    representation_keys = []
-    for key in model.state_dict().keys():
-        if key not in head_keys:
-            # if key not in head_keys and key != 'embedding.weight':
-            representation_keys.append(key)
+def get_keys(algorithm, model):
+    if algorithm == "fedavg" or algorithm == "fedrep":
+        ft_keys = ['decoder.weight', 'decoder.bias']
+    elif algorithm == "lg":
+        ft_keys = ['embedding.weight']
+    else:
+        raise NotImplementedError
 
-    return head_keys, representation_keys
+    non_ft_keys = []
+    for key in model.state_dict().keys():
+        if key not in ft_keys:
+            # if key not in head_keys and key != 'embedding.weight':
+            non_ft_keys.append(key)
+
+    return ft_keys, non_ft_keys
 
 def get_TEXT(args):
     if args.model == "rnn":

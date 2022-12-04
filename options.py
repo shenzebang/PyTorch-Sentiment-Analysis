@@ -8,7 +8,7 @@ def args_parser():
     parser = argparse.ArgumentParser()
 
     parser.add_argument('--dataset', type=str, choices=["imdb", "sent140"])
-    parser.add_argument('--algorithm', type=str, choices=["fedavg", "fedrep"])
+    parser.add_argument('--algorithm', type=str, choices=["fedavg", "fedrep", "lg"])
     parser.add_argument('--model', type=str, choices=["rnn", "cnn"])
 
     parser.add_argument('--SEED', type=int, default=400)

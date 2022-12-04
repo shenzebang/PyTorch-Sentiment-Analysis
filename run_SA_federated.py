@@ -38,8 +38,7 @@ def train_on_federated_datasets(args, model, clients_iterators):
     sd_global = model.state_dict()
     sd_locals = [copy.deepcopy(sd_global) for _ in range(N_clients)]
 
-    algorithm = ALGORITHMS[args.algorithm]
-    to_candidate = TO_CANDIDATE[args.algorithm]
+    algorithm_fn = ALGORITHMS[args.algorithm]
     scheduler_fl = Scheduler("exponential-fixed", args.scheduler, N_clients=N_clients, participating_rate=args.participating_rate,
                              N_init_clients=args.N_init_clients, double_every=args.double_every)
     for epoch in range(args.N_global_rounds):
@@ -50,22 +49,18 @@ def train_on_federated_datasets(args, model, clients_iterators):
 
         index_activated = scheduler_fl.step()
         index_activated = np.sort(index_activated)
-        # print(f"In epoch {epoch}, the activated clients are {index_activated}")
 
         clients_iterators_activated = [clients_iterators[index] for index in index_activated]
-        sd_locals_activated = [sd_locals[index] for index in index_activated]
 
         weight_clients = n_sample_clients_train / np.sum(n_sample_clients_train[index_activated])
 
-        for cid, client_iterators, sd_local in zip(index_activated, clients_iterators_activated, sd_locals_activated):
+        for cid, client_iterators in zip(index_activated, clients_iterators_activated):
             train_iterator, _, _ = client_iterators
 
             model_cid = copy.deepcopy(model)
-            sd_local, train_loss_local, train_acc_local = algorithm(model_cid, sd_global, sd_local, train_iterator, criterion,
+            _, train_loss_local, train_acc_local = algorithm_fn(model_cid, train_iterator, criterion,
                                                                     args.N_local_epoch, lr=args.lr)
 
-
-            # print(f"{torch.norm(model_cid.state_dict()['embedding.weight'] - model.state_dict()['embedding.weight']): .10f}")
             train_loss += train_loss_local * weight_clients[cid]
             train_acc += train_acc_local * weight_clients[cid]
             sd_locals[cid] = model_cid.state_dict()
@@ -77,7 +72,6 @@ def train_on_federated_datasets(args, model, clients_iterators):
                              + args.lr_g * torch.sum(torch.stack([sd_locals[cid][key] * weight_clients[cid] for cid in index_activated], dim=0), dim=0)
 
         model.load_state_dict(sd_global_new)
-        # torch.save(sd_global_new, 'tut2-model.pt')
 
         end_time = time.time()
 
@@ -88,16 +82,15 @@ def train_on_federated_datasets(args, model, clients_iterators):
         valid_acc = 0
         if args.validate:
             weight_clients = n_sample_clients_test / np.sum(n_sample_clients_test)
-            for cid, (client_iterators, sd_local) in enumerate(zip(clients_iterators, sd_locals)):
+            for cid, client_iterators in enumerate(clients_iterators):
                 # train_iterator, valid_iterator, _ = client_iterators
                 train_iterator, _, valid_iterator = client_iterators
 
-                # sd_candidate = to_candidate(model, sd_global, sd_local)
                 model_cid = copy.deepcopy(model)
 
                 if args.N_ft_epoch > 0:
                     optimizer = optim.Adam(model_cid.parameters(), lr=1e-2)
-                    train_over_keys(model_cid, train_iterator, optimizer, criterion, args.N_ft_epoch, model.head_keys)
+                    train_over_keys(model_cid, train_iterator, optimizer, criterion, args.N_ft_epoch, model.ft_keys)
 
                 valid_loss_local, valid_acc_local = evaluate(model_cid, valid_iterator, criterion)
 
@@ -116,26 +109,26 @@ def train_on_federated_datasets(args, model, clients_iterators):
 
     ### test ###
     # sd_test = torch.load('tut2-model.pt')
-    test_loss = 0
-    test_acc = 0
-    weight_clients = n_sample_clients_test / np.sum(n_sample_clients_test)
-    for cid, (client_iterators, sd_local) in enumerate(zip(clients_iterators, sd_locals)):
-        train_iterator, _, test_iterator = client_iterators
-
-        # model.load_state_dict(copy.deepcopy(sd_test))
-
-        # sd_candidate = to_candidate(model, sd_test, sd_local)
-        # model.load_state_dict(sd_candidate)
-
-        if args.N_ft_epoch > 0:
-            optimizer = optim.Adam(model.parameters(), lr=1e-2)
-            train_over_keys(model, train_iterator, optimizer, criterion, args.N_ft_epoch, model.head_keys)
-
-        test_loss_local, test_acc_local = evaluate(model, test_iterator, criterion)
-        test_loss += test_loss_local * weight_clients[cid]
-        test_acc += test_acc_local * weight_clients[cid]
-
-    print(f'Test Loss: {test_loss:.3f} | Test Acc: {test_acc * 100:.2f}%')
+    # test_loss = 0
+    # test_acc = 0
+    # weight_clients = n_sample_clients_test / np.sum(n_sample_clients_test)
+    # for cid, (client_iterators, sd_local) in enumerate(zip(clients_iterators, sd_locals)):
+    #     train_iterator, _, test_iterator = client_iterators
+    #
+    #     # model.load_state_dict(copy.deepcopy(sd_test))
+    #
+    #     # sd_candidate = to_candidate(model, sd_test, sd_local)
+    #     # model.load_state_dict(sd_candidate)
+    #
+    #     if args.N_ft_epoch > 0:
+    #         optimizer = optim.Adam(model.parameters(), lr=1e-2)
+    #         train_over_keys(model, train_iterator, optimizer, criterion, args.N_ft_epoch, model.ft_keys)
+    #
+    #     test_loss_local, test_acc_local = evaluate(model, test_iterator, criterion)
+    #     test_loss += test_loss_local * weight_clients[cid]
+    #     test_acc += test_acc_local * weight_clients[cid]
+    #
+    # print(f'Test Loss: {test_loss:.3f} | Test Acc: {test_acc * 100:.2f}%')
 
 
 def SA_federated(args, device):
@@ -158,10 +151,10 @@ def SA_federated(args, device):
 
     model = get_model(args, TEXT)
 
-    head_keys, representation_keys = get_keys(model)
-    model.head_keys = head_keys
-    model.representation_keys = representation_keys
-    print(f"The head keys for fine-tuning are {model.head_keys}")
+    ft_keys, non_ft_keys = get_keys(args.algorithm, model)
+    model.ft_keys = ft_keys
+    model.non_ft_keys = non_ft_keys
+    print(f"The head keys for fine-tuning are {model.ft_keys}")
 
     pretrained_embeddings = TEXT.vocab.vectors
     print(pretrained_embeddings.shape)
