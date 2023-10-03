@@ -139,10 +139,12 @@ def get_model(args, TEXT):
     return model
 
 def get_keys(algorithm, model):
-    if algorithm == "fedavg" or algorithm == "fedrep":
+    if algorithm == "fedavg-ft" or algorithm == "fedrep":
         ft_keys = ['decoder.weight', 'decoder.bias']
     elif algorithm == "lg":
         ft_keys = ['embedding.weight']
+    elif algorithm == "hfmaml" or algorithm == "fedavg":
+        ft_keys = []
     else:
         raise NotImplementedError
 

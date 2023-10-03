@@ -15,6 +15,14 @@ class Scheduler:
         elif mode == "exponential-fixed":
             # mode == exponential-fixed: clients have an exponentially distributed running time.
             self.simulated_running_time = np.random.exponential(1, N_clients)
+        elif mode == "fast-and-slow":
+            ratio_fast = .7
+            N_clients_fast = int(N_clients * ratio_fast)
+            N_clients_slow = N_clients - N_clients_fast
+            simulated_running_time_fast = np.random.exponential(.1, N_clients_fast)
+            simulated_running_time_slow = np.random.exponential(10, N_clients_slow)
+            self.simulated_running_time = np.concatenate([simulated_running_time_fast, simulated_running_time_slow])
+            np.random.shuffle(self.simulated_running_time)
         else:
             raise NotImplementedError
 

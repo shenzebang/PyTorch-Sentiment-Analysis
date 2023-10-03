@@ -12,10 +12,12 @@ import copy
 
 from run_SA_single import evaluate, train
 from utilities_data import LOAD_DATASET_FEDEATED
-from algorithms_federated import ALGORITHMS, TO_CANDIDATE, train_over_keys
+from algorithms_federated import ALGORITHMS, ADAPT, train_over_keys
 from scheduler import Scheduler
 
 import numpy as np
+import os
+import pandas as pd
 
 def train_on_federated_datasets(args, model, clients_iterators):
     # ===== training =====
@@ -23,6 +25,12 @@ def train_on_federated_datasets(args, model, clients_iterators):
 
     N_clients = len(clients_iterators)
     print("#" * 10 + f"There are {N_clients} clients. " + "#" * 10)
+
+    save_directory = './save/'
+    if not os.path.exists(save_directory):
+        os.makedirs(save_directory)
+    save_file = save_directory + f'{args.dataset}_{args.algorithm}_{args.scheduler}_{args.mode}_{args.description}.csv'
+    print(f"The accuracy will be saved as {save_file}.")
 
     n_sample_clients_train = np.asarray([len(client_iterators[0].dataset) for client_iterators in clients_iterators])
     n_sample_clients_test = np.asarray([len(client_iterators[2].dataset) for client_iterators in clients_iterators])
@@ -39,8 +47,12 @@ def train_on_federated_datasets(args, model, clients_iterators):
     sd_locals = [copy.deepcopy(sd_global) for _ in range(N_clients)]
 
     algorithm_fn = ALGORITHMS[args.algorithm]
-    scheduler_fl = Scheduler("exponential-fixed", args.scheduler, N_clients=N_clients, participating_rate=args.participating_rate,
+    adapt_fn = ADAPT[args.algorithm]
+    scheduler_fl = Scheduler(args.mode, args.scheduler, N_clients=N_clients, participating_rate=args.participating_rate,
                              N_init_clients=args.N_init_clients, double_every=args.double_every)
+
+    validation_accs = []
+    times = []
     for epoch in range(args.N_global_rounds):
         start_time = time.time()
         ### train ###
@@ -88,9 +100,7 @@ def train_on_federated_datasets(args, model, clients_iterators):
 
                 model_cid = copy.deepcopy(model)
 
-                if args.N_ft_epoch > 0:
-                    optimizer = optim.Adam(model_cid.parameters(), lr=1e-2)
-                    train_over_keys(model_cid, train_iterator, optimizer, criterion, args.N_ft_epoch, model.ft_keys)
+                adapt_fn(model_cid, train_iterator, criterion, args.N_ft_epoch)
 
                 valid_loss_local, valid_acc_local = evaluate(model_cid, valid_iterator, criterion)
 
@@ -107,6 +117,13 @@ def train_on_federated_datasets(args, model, clients_iterators):
         print(f'\tTrain Loss: {train_loss:.3f} | Train Acc: {train_acc * 100:.2f}%')
         print(f'\t Val. Loss: {valid_loss:.3f} |  Val. Acc: {valid_acc * 100:.2f}%')
 
+        validation_accs.append(valid_acc)
+        times.append(scheduler_fl.total_simulated_time)
+
+    validation_accs = np.asarray(validation_accs)
+    times = np.asarray(times)
+    validation_accs = pd.DataFrame(np.stack([times, validation_accs], axis=1), columns=['times', 'accs'])
+    validation_accs.to_csv(save_file, index=False)
     ### test ###
     # sd_test = torch.load('tut2-model.pt')
     # test_loss = 0
